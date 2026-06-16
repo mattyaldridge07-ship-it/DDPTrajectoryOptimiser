@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SE(2) Vehicle Dynamics + Pacejka — Interactive</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --border:#2a3038; --text:#e6edf3;
+    --muted:#8b949e; --accent:#4f9cf9; --accent2:#f97316; --grid:#222831;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); padding:12px;
+  }
+  h1{font-size:1.1rem; margin:0 0 4px;}
+  h2{font-size:0.85rem; margin:14px 0 6px; color:var(--accent); text-transform:uppercase; letter-spacing:0.05em;}
+  .sub{color:var(--muted); font-size:0.78rem; margin-bottom:10px;}
+  .grid{display:grid; grid-template-columns:1fr; gap:12px;}
+  @media(min-width:760px){ .grid{grid-template-columns: 360px 1fr;} }
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px;}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:6px 0;}
+  .row label{font-size:0.78rem; color:var(--muted); flex:1;}
+  .row .val{font-size:0.78rem; color:var(--text); width:58px; text-align:right; font-variant-numeric:tabular-nums;}
+  input[type=range]{flex:2.4; accent-color:var(--accent); height:18px;}
+  canvas{width:100%; background:#0a0d12; border:1px solid var(--border); border-radius:8px; display:block;}
+  .canvas-wrap{margin-bottom:10px;}
+  .canvas-title{font-size:0.75rem; color:var(--muted); margin:0 0 4px;}
+  .stats{display:grid; grid-template-columns:repeat(2,1fr); gap:4px; font-size:0.75rem; color:var(--muted);}
+  .stats b{color:var(--text);}
+  .reset{
+    background:var(--accent); color:#fff; border:none; border-radius:6px;
+    padding:7px 12px; font-size:0.78rem; cursor:pointer; margin-top:8px; width:100%;
+  }
+  .reset:active{opacity:0.8;}
+  details{margin-top:6px;}
+  summary{font-size:0.8rem; color:var(--accent); cursor:pointer; padding:4px 0;}
+  .legend{display:flex; gap:14px; font-size:0.72rem; color:var(--muted); margin-top:4px; flex-wrap:wrap;}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle;}
+</style>
+</head>
+<body>
+
+<h1>SE(2) Rigid-Body Vehicle + Pacejka Tire Simulator</h1>
+<div class="sub">Pure body-frame integration via the SE(2) exponential map. Adjust any slider to re-simulate instantly.</div>
+
+<div class="grid">
+  <!-- CONTROLS -->
+  <div class="panel" id="controls">
+
+    <h2>Vehicle Parameters</h2>
+    <div class="row"><label for="mass">Mass m [kg]</label><input type="range" id="mass" min="150" max="350" step="1" value="230"><span class="val" id="mass_v"></span></div>
+    <div class="row"><label for="Iz">Yaw inertia Iz [kg·m²]</label><input type="range" id="Iz" min="50" max="250" step="1" value="120"><span class="val" id="Iz_v"></span></div>
+    <div class="row"><label for="lf">CG→front lf [m]</label><input type="range" id="lf" min="0.3" max="1.5" step="0.01" value="0.8"><span class="val" id="lf_v"></span></div>
+    <div class="row"><label for="lr">CG→rear lr [m]</label><input type="range" id="lr" min="0.3" max="1.5" step="0.01" value="0.7"><span class="val" id="lr_v"></span></div>
+
+    <h2>Pacejka — Lateral</h2>
+    <div class="row"><label for="Blat">B (stiffness)</label><input type="range" id="Blat" min="1" max="25" step="0.1" value="10"><span class="val" id="Blat_v"></span></div>
+    <div class="row"><label for="Clat">C (shape)</label><input type="range" id="Clat" min="1.0" max="2.5" step="0.01" value="1.9"><span class="val" id="Clat_v"></span></div>
+    <div class="row"><label for="Dlat">D (peak, ×Fz)</label><input type="range" id="Dlat" min="0.5" max="1.6" step="0.01" value="1.0"><span class="val" id="Dlat_v"></span></div>
+    <div class="row"><label for="Elat">E (curvature)</label><input type="range" id="Elat" min="-2" max="1" step="0.01" value="0.97"><span class="val" id="Elat_v"></span></div>
+
+    <h2>Pacejka — Longitudinal</h2>
+    <div class="row"><label for="Blong">B (stiffness)</label><input type="range" id="Blong" min="1" max="25" step="0.1" value="11"><span class="val" id="Blong_v"></span></div>
+    <div class="row"><label for="Clong">C (shape)</label><input type="range" id="Clong" min="1.0" max="2.5" step="0.01" value="1.9"><span class="val" id="Clong_v"></span></div>
+    <div class="row"><label for="Dlong">D (peak, ×Fz)</label><input type="range" id="Dlong" min="0.5" max="1.6" step="0.01" value="1.0"><span class="val" id="Dlong_v"></span></div>
+    <div class="row"><label for="Elong">E (curvature)</label><input type="range" id="Elong" min="-2" max="1" step="0.01" value="0.97"><span class="val" id="Elong_v"></span></div>
+
+    <h2>Initial Conditions & Sim</h2>
+    <div class="row"><label for="vx0">Initial vx [m/s]</label><input type="range" id="vx0" min="0" max="30" step="0.5" value="10"><span class="val" id="vx0_v"></span></div>
+    <div class="row"><label for="dt">Timestep dt [s]</label><input type="range" id="dt" min="0.005" max="0.05" step="0.005" value="0.02"><span class="val" id="dt_v"></span></div>
+    <div class="row"><label for="N">Steps N</label><input type="range" id="N" min="20" max="400" step="1" value="150"><span class="val" id="N_v"></span></div>
+
+    <h2>Control Input</h2>
+    <div class="row"><label for="delta">Steering δ [deg] (const)</label><input type="range" id="delta" min="-30" max="30" step="0.5" value="12"><span class="val" id="delta_v"></span></div>
+    <div class="row"><label for="throttle">Throttle u [-1..1]</label><input type="range" id="throttle" min="-1" max="1" step="0.01" value="0.3"><span class="val" id="throttle_v"></span></div>
+
+    <details open>
+      <summary>Steering sweep / steady-state mode</summary>
+      <div class="row"><label for="sweepOn">Sweep δ over time?</label><input type="range" id="sweepOn" min="0" max="1" step="1" value="0"><span class="val" id="sweepOn_v"></span></div>
+      <div class="row"><label for="sweepFreq">Sweep frequency [Hz]</label><input type="range" id="sweepFreq" min="0.05" max="3" step="0.05" value="0.5"><span class="val" id="sweepFreq_v"></span></div>
+    </details>
+
+    <button class="reset" onclick="resetDefaults()">Reset to defaults</button>
+  </div>
+
+  <!-- OUTPUTS -->
+  <div class="panel">
+    <h2>Trajectory (top-down, X-Y, world frame)</h2>
+    <div class="canvas-wrap">
+      <canvas id="traj" width="600" height="380"></canvas>
+    </div>
+    <div class="stats" id="trajStats"></div>
+
+    <h2>Body Velocities vs. Time</h2>
+    <div class="canvas-wrap">
+      <canvas id="vel" width="600" height="180"></canvas>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#4f9cf9"></span>v_x [m/s]</span>
+      <span><span class="dot" style="background:#f97316"></span>v_y [m/s]</span>
+      <span><span class="dot" style="background:#22c55e"></span>ω [rad/s]</span>
+    </div>
+
+    <h2>Pacejka Curves (live, current B/C/D/E)</h2>
+    <div class="canvas-wrap">
+      <canvas id="pacejka" width="600" height="200"></canvas>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#4f9cf9"></span>Lateral F_y vs slip angle α [-30°..30°]</span>
+      <span><span class="dot" style="background:#f97316"></span>Longitudinal F_x vs slip ratio κ [-1..1]</span>
+    </div>
+    <div class="stats" id="pacejkaStats"></div>
+  </div>
+</div>
+
+<script>
+// =========================================================================
+// SE(2) helpers
+// =========================================================================
+function se2Exp(vx, vy, omega){
+  const theta = omega;
+  let A, B;
+  if (Math.abs(theta) < 1e-8){
+    A = 1 - theta*theta/6;
+    B = theta/2 - theta*theta*theta/24;
+  } else {
+    A = Math.sin(theta)/theta;
+    B = (1 - Math.cos(theta))/theta;
+  }
+  const tx = A*vx - B*vy;
+  const ty = B*vx + A*vy;
+  const c = Math.cos(theta), s = Math.sin(theta);
+  // returns [c,-s,tx, s,c,ty, 0,0,1] as 3x3 row-major
+  return [c,-s,tx, s,c,ty, 0,0,1];
+}
+function matMul3(A,B){
+  const r = new Array(9).fill(0);
+  for(let i=0;i<3;i++)
+    for(let j=0;j<3;j++)
+      for(let k=0;k<3;k++)
+        r[i*3+j] += A[i*3+k]*B[k*3+j];
+  return r;
+}
+
+// =========================================================================
+// Pacejka magic formula
+// =========================================================================
+function pacejka(slip, B, C, D, E, Fz){
+  const Bx = B*slip;
+  return Fz * D * Math.sin(C * Math.atan(Bx - E*(Bx - Math.atan(Bx))));
+}
+
+// =========================================================================
+// Read params from sliders
+// =========================================================================
+function getParams(){
+  const g = id => parseFloat(document.getElementById(id).value);
+  const mass = g('mass'), Iz = g('Iz'), lf = g('lf'), lr = g('lr');
+  const totalW = mass * 9.81;
+  const Fz_f = totalW * (lr/(lf+lr)) / 2.0;
+  const Fz_r = totalW * (lf/(lf+lr)) / 2.0;
+  return {
+    mass, Iz, lf, lr, Fz_f, Fz_r,
+    Blat:g('Blat'), Clat:g('Clat'), Dlat:g('Dlat'), Elat:g('Elat'),
+    Blong:g('Blong'), Clong:g('Clong'), Dlong:g('Dlong'), Elong:g('Elong'),
+    vx0:g('vx0'), dt:g('dt'), N: Math.round(g('N')),
+    delta0: g('delta')*Math.PI/180, throttle: g('throttle'),
+    sweepOn: g('sweepOn') > 0.5, sweepFreq: g('sweepFreq')
+  };
+}
+
+// =========================================================================
+// Body-frame accelerations + tire forces
+// =========================================================================
+function bodyAccel(p, vx, vy, omega, delta, throttle){
+  const vx_safe = (vx === 0) ? 1e-3 : Math.sign(vx)*Math.max(Math.abs(vx), 1e-3);
+  const vyf = vy + p.lf*omega;
+  const vyr = vy - p.lr*omega;
+  const alpha_f = delta - Math.atan2(vyf, vx_safe);
+  const alpha_r = -Math.atan2(vyr, vx_safe);
+
+  const Fyf = 2*pacejka(alpha_f, p.Blat, p.Clat, p.Dlat, p.Elat, p.Fz_f);
+  const Fyr = 2*pacejka(alpha_r, p.Blat, p.Clat, p.Dlat, p.Elat, p.Fz_r);
+
+  const kappa = Math.max(-1,Math.min(1,throttle)) * 0.15;
+  let Fxf = 0, Fxr;
+  if (throttle >= 0){
+    Fxr = 2*pacejka(kappa, p.Blong, p.Clong, p.Dlong, p.Elong, p.Fz_r);
+  } else {
+    Fxr = 2*pacejka(kappa, p.Blong, p.Clong, p.Dlong, p.Elong, p.Fz_r);
+    Fxf = 2*pacejka(kappa, p.Blong, p.Clong, p.Dlong, p.Elong, p.Fz_f);
+  }
+
+  const Fx = Fxf*Math.cos(delta) - Fyf*Math.sin(delta) + Fxr;
+  const Fy = Fyf*Math.cos(delta) + Fxf*Math.sin(delta) + Fyr;
+
+  const ax = Fx/p.mass + omega*vy;
+  const ay = Fy/p.mass - omega*vx;
+  const Myaw = p.lf*(Fyf*Math.cos(delta) + Fxf*Math.sin(delta)) - p.lr*Fyr;
+  const omega_dot = Myaw/p.Iz;
+
+  return {ax, ay, omega_dot, alpha_f, alpha_r, Fyf, Fyr, Fxf, Fxr};
+}
+
+// =========================================================================
+// Full simulation
+// =========================================================================
+function simulate(p){
+  let T = [1,0,0, 0,1,0, 0,0,1]; // identity SE(2)
+  let vx = p.vx0, vy = 0, omega = 0;
+  const xs=[T[2]], ys=[T[5]], thetas=[0];
+  const vxs=[vx], vys=[vy], omegas=[omega];
+  const ts=[0];
+  let maxAlphaF=0, maxAlphaR=0, maxFy=0;
+
+  for(let k=0;k<p.N;k++){
+    let delta = p.delta0;
+    if (p.sweepOn){
+      delta = p.delta0 * Math.sin(2*Math.PI*p.sweepFreq * (k*p.dt));
+    }
+    const acc = bodyAccel(p, vx, vy, omega, delta, p.throttle);
+    vx += p.dt*acc.ax;
+    vy += p.dt*acc.ay;
+    omega += p.dt*acc.omega_dot;
+
+    maxAlphaF = Math.max(maxAlphaF, Math.abs(acc.alpha_f));
+    maxAlphaR = Math.max(maxAlphaR, Math.abs(acc.alpha_r));
+    maxFy = Math.max(maxFy, Math.abs(acc.Fyf), Math.abs(acc.Fyr));
+
+    // pose update: T_next = T * exp(dt*[vx,vy,omega])
+    const E = se2Exp(p.dt*vx, p.dt*vy, p.dt*omega);
+    T = matMul3(T, E);
+
+    xs.push(T[2]); ys.push(T[5]);
+    thetas.push(Math.atan2(T[3], T[0]));
+    vxs.push(vx); vys.push(vy); omegas.push(omega);
+    ts.push((k+1)*p.dt);
+  }
+  return {xs, ys, thetas, vxs, vys, omegas, ts, maxAlphaF, maxAlphaR, maxFy};
+}
+
+// =========================================================================
+// Drawing
+// =========================================================================
+function clear(ctx, w, h){
+  ctx.clearRect(0,0,w,h);
+}
+
+function drawGrid(ctx, w, h, nx, ny){
+  ctx.strokeStyle = '#222831';
+  ctx.lineWidth = 1;
+  for(let i=0;i<=nx;i++){
+    const x = i/nx*w;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+  for(let j=0;j<=ny;j++){
+    const y = j/ny*h;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+}
+
+function drawTrajectory(res){
+  const cv = document.getElementById('traj');
+  const ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  clear(ctx, w, h);
+  drawGrid(ctx, w, h, 12, 8);
+
+  const xs = res.xs, ys = res.ys;
+  let minX=Math.min(...xs), maxX=Math.max(...xs);
+  let minY=Math.min(...ys), maxY=Math.max(...ys);
+  // pad and force equal aspect
+  let rangeX = maxX-minX, rangeY = maxY-minY;
+  const pad = 1.0;
+  rangeX = Math.max(rangeX, 1); rangeY = Math.max(rangeY, 1);
+  let range = Math.max(rangeX, rangeY) + 2*pad;
+  const cx = (minX+maxX)/2, cy=(minY+maxY)/2;
+  minX = cx-range/2; maxX=cx+range/2;
+  minY = cy-range/2; maxY=cy+range/2;
+
+  const sx = x => (x-minX)/(maxX-minX)*w;
+  const sy = y => h - (y-minY)/(maxY-minY)*h; // flip Y for screen coords
+
+  // path
+  ctx.strokeStyle = '#4f9cf9';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(sx(xs[0]), sy(ys[0]));
+  for(let i=1;i<xs.length;i++) ctx.lineTo(sx(xs[i]), sy(ys[i]));
+  ctx.stroke();
+
+  // start marker
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath(); ctx.arc(sx(xs[0]), sy(ys[0]), 5, 0, 2*Math.PI); ctx.fill();
+
+  // car orientation arrow at a few sample points
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth = 1.5;
+  const step = Math.max(1, Math.floor(xs.length/12));
+  for(let i=0;i<xs.length;i+=step){
+    const th = res.thetas[i];
+    const L = Math.min(w,h)*0.03;
+    const x0=sx(xs[i]), y0=sy(ys[i]);
+    const x1 = x0 + L*Math.cos(th);
+    const y1 = y0 - L*Math.sin(th);
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+  }
+
+  // end marker
+  ctx.fillStyle = '#e6edf3';
+  ctx.beginPath(); ctx.arc(sx(xs[xs.length-1]), sy(ys[ys.length-1]), 4, 0, 2*Math.PI); ctx.fill();
+
+  // axis labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`X: [${minX.toFixed(1)}, ${maxX.toFixed(1)}] m`, 6, h-6);
+  ctx.save();
+  ctx.translate(12,14);
+  ctx.fillText(`Y: [${minY.toFixed(1)}, ${maxY.toFixed(1)}] m`, 0, 0);
+  ctx.restore();
+}
+
+function drawVelocities(res){
+  const cv = document.getElementById('vel');
+  const ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  clear(ctx, w, h);
+  drawGrid(ctx, w, h, 12, 4);
+
+  const ts = res.ts;
+  const series = [
+    {data: res.vxs, color:'#4f9cf9'},
+    {data: res.vys, color:'#f97316'},
+    {data: res.omegas, color:'#22c55e'}
+  ];
+  // shared y-scale across all series (separate would be confusing for omega vs vx)
+  let allVals = [];
+  series.forEach(s => allVals = allVals.concat(s.data));
+  let minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  if (maxV-minV < 1e-6){ minV-=1; maxV+=1; }
+  const padV = (maxV-minV)*0.1;
+  minV -= padV; maxV += padV;
+
+  const sx = t => t/ts[ts.length-1] * w;
+  const sy = v => h - (v-minV)/(maxV-minV)*h;
+
+  // zero line
+  ctx.strokeStyle = '#3a4048';
+  ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(0, sy(0)); ctx.lineTo(w, sy(0)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  series.forEach(s=>{
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx(ts[0]), sy(s.data[0]));
+    for(let i=1;i<ts.length;i++) ctx.lineTo(sx(ts[i]), sy(s.data[i]));
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`y-range: [${minV.toFixed(2)}, ${maxV.toFixed(2)}]`, 6, 14);
+  ctx.fillText(`t: 0 → ${ts[ts.length-1].toFixed(2)} s`, 6, h-6);
+}
+
+function drawPacejka(p, res){
+  const cv = document.getElementById('pacejka');
+  const ctx = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  clear(ctx, w, h);
+  drawGrid(ctx, w, h, 12, 4);
+
+  // lateral curve over alpha in [-30,30] deg, using Fz_f
+  const nPts = 120;
+  const latPts = [], longPts = [];
+  let maxAbsF = 1;
+  for(let i=0;i<=nPts;i++){
+    const a = -30 + 60*i/nPts; // deg
+    const arad = a*Math.PI/180;
+    const Fy = pacejka(arad, p.Blat, p.Clat, p.Dlat, p.Elat, p.Fz_f*2);
+    latPts.push([a/30, Fy]); // normalize x to [-1,1]
+    maxAbsF = Math.max(maxAbsF, Math.abs(Fy));
+  }
+  for(let i=0;i<=nPts;i++){
+    const k = -1 + 2*i/nPts;
+    const Fx = pacejka(k, p.Blong, p.Clong, p.Dlong, p.Elong, p.Fz_r*2);
+    longPts.push([k, Fx]);
+    maxAbsF = Math.max(maxAbsF, Math.abs(Fx));
+  }
+
+  const sx = x => (x+1)/2*w; // x in [-1,1] -> [0,w]
+  const sy = y => h/2 - (y/maxAbsF)*(h/2-10);
+
+  // zero lines
+  ctx.strokeStyle = '#3a4048';
+  ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(0, sy(0)); ctx.lineTo(w, sy(0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx(0), 0); ctx.lineTo(sx(0), h); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = '#4f9cf9'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  latPts.forEach((pt,i)=>{ if(i===0) ctx.moveTo(sx(pt[0]),sy(pt[1])); else ctx.lineTo(sx(pt[0]),sy(pt[1])); });
+  ctx.stroke();
+
+  ctx.strokeStyle = '#f97316'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  longPts.forEach((pt,i)=>{ if(i===0) ctx.moveTo(sx(pt[0]),sy(pt[1])); else ctx.lineTo(sx(pt[0]),sy(pt[1])); });
+  ctx.stroke();
+
+  // mark current operating points (last sim step's slip values, if available)
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('α: -30°..+30°  |  κ: -1..+1', 6, 14);
+  ctx.fillText(`peak |F|: ${maxAbsF.toFixed(0)} N`, 6, h-6);
+}
+
+// =========================================================================
+// Main update loop
+// =========================================================================
+const sliderIds = [
+  'mass','Iz','lf','lr','Blat','Clat','Dlat','Elat','Blong','Clong','Dlong','Elong',
+  'vx0','dt','N','delta','throttle','sweepOn','sweepFreq'
+];
+const defaults = {
+  mass:230, Iz:120, lf:0.8, lr:0.7,
+  Blat:10, Clat:1.9, Dlat:1.0, Elat:0.97,
+  Blong:11, Clong:1.9, Dlong:1.0, Elong:0.97,
+  vx0:10, dt:0.02, N:150, delta:12, throttle:0.3, sweepOn:0, sweepFreq:0.5
+};
+
+function fmt(id, val){
+  switch(id){
+    case 'sweepOn': return val>0.5 ? 'ON':'OFF';
+    case 'dt': return val.toFixed(3)+' s';
+    case 'delta': return val.toFixed(1)+'°';
+    case 'sweepFreq': return val.toFixed(2)+' Hz';
+    case 'N': return String(Math.round(val));
+    default: return val.toFixed(2);
+  }
+}
+
+function update(){
+  // update displayed values
+  sliderIds.forEach(id=>{
+    const v = parseFloat(document.getElementById(id).value);
+    document.getElementById(id+'_v').textContent = fmt(id, v);
+  });
+
+  // disable steering slider visually when sweep is on (still functional as amplitude)
+  const sweepOn = parseFloat(document.getElementById('sweepOn').value) > 0.5;
+  document.querySelector('label[for="delta"]').textContent =
+    sweepOn ? 'Steering amplitude δ [deg]' : 'Steering δ [deg] (const)';
+
+  const p = getParams();
+  const res = simulate(p);
+
+  drawTrajectory(res);
+  drawVelocities(res);
+  drawPacejka(p, res);
+
+  // stats
+  const finalSpeed = Math.hypot(res.vxs[res.vxs.length-1], res.vys[res.vys.length-1]);
+  document.getElementById('trajStats').innerHTML = `
+    <div>Final position: <b>(${res.xs[res.xs.length-1].toFixed(2)}, ${res.ys[res.ys.length-1].toFixed(2)}) m</b></div>
+    <div>Final heading: <b>${(res.thetas[res.thetas.length-1]*180/Math.PI).toFixed(1)}°</b></div>
+    <div>Final speed: <b>${finalSpeed.toFixed(2)} m/s</b></div>
+    <div>Sim duration: <b>${(p.N*p.dt).toFixed(2)} s</b></div>
+  `;
+
+  const muFront = (2*res.maxFy / (p.Fz_f*2)).toFixed(2);
+  document.getElementById('pacejkaStats').innerHTML = `
+    <div>Max |slip angle α_f|: <b>${(res.maxAlphaF*180/Math.PI).toFixed(1)}°</b></div>
+    <div>Max |slip angle α_r|: <b>${(res.maxAlphaR*180/Math.PI).toFixed(1)}°</b></div>
+    <div>Max |F_y| reached: <b>${res.maxFy.toFixed(0)} N</b></div>
+    <div>Implied lateral g: <b>${(res.maxFy/(p.mass*9.81)).toFixed(2)} g</b></div>
+  `;
+}
+
+function resetDefaults(){
+  Object.entries(defaults).forEach(([id,val])=>{
+    document.getElementById(id).value = val;
+  });
+  update();
+}
+
+sliderIds.forEach(id=>{
+  document.getElementById(id).addEventListener('input', update);
+});
+
+update();
+</script>
+</body>
+</html>
